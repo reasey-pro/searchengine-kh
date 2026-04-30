@@ -28,8 +28,14 @@ topic_crawler/
 ├── crawler.py       # crawling, parsing, filtering
 ├── run.py           # CLI entry point — runs the crawler
 ├── viewer.py        # local web UI to browse & filter results
-└── data/
-    └── results.jsonl  # output (created on first save)
+├── data/
+│   └── results.jsonl  # local output (created on first save)
+├── docs/                       # ── GitHub Pages site ──
+│   ├── index.html              #    static viewer
+│   └── results.jsonl           #    public copy of the data
+└── .github/
+    └── workflows/
+        └── crawl.yml           # scheduled crawl + auto-publish
 ```
 
 ## Installation
@@ -175,3 +181,84 @@ literally as case-insensitive phrases.
   skipped automatically).
 - This crawler is intentionally simple. For large-scale or distributed
   crawling, look at [Scrapy](https://scrapy.org/).
+
+## Publishing to GitHub Pages (auto-refreshing)
+
+The project ships with everything you need to host a public, automatically
+updated version of your crawl results on GitHub Pages — for free, with no
+server. The crawl runs on a schedule inside GitHub Actions, commits the
+new `results.jsonl` to the repo, and Pages serves the static viewer.
+
+### One-time setup
+
+1. **Push the project to a GitHub repo** (public, or private with Pages
+   enabled on a paid plan):
+
+   ```bash
+   git init
+   git add .
+   git commit -m "Initial topic crawler"
+   git branch -M main
+   git remote add origin https://github.com/YOUR_USERNAME/topic-crawler.git
+   git push -u origin main
+   ```
+
+2. **Enable GitHub Pages**: in your repo, go to
+   **Settings → Pages → Source: Deploy from a branch**, set
+   **Branch: `main`** and **Folder: `/docs`**, then **Save**.
+
+3. **Allow Actions to push**: go to
+   **Settings → Actions → General → Workflow permissions** and select
+   **Read and write permissions**. (This lets the workflow commit the
+   updated `results.jsonl` back to the repo.)
+
+After about 30–60 seconds your site is live at:
+
+```
+https://YOUR_USERNAME.github.io/topic-crawler/
+```
+
+### How the auto-refresh works
+
+The workflow at `.github/workflows/crawl.yml` runs:
+
+- **Daily at 06:00 UTC** (cron schedule — change in the workflow YAML).
+- **Manually**, via the **Actions tab → "Crawl and publish" → Run workflow**.
+- **On any push** that changes the crawler code or config.
+
+Each run:
+
+1. Restores the previous `docs/results.jsonl` so the crawler resumes
+   instead of starting from scratch.
+2. Runs `python run.py` with conservative defaults (50 pages, 2s delay).
+3. Copies the new JSONL into `docs/results.jsonl`.
+4. Commits and pushes if anything changed.
+
+GitHub Pages then serves the updated file the next time someone visits.
+
+### Customizing the schedule
+
+Edit `.github/workflows/crawl.yml`. The cron lives near the top:
+
+```yaml
+schedule:
+  - cron: "0 6 * * *"   # daily at 06:00 UTC
+```
+
+Some examples:
+
+- `"0 */6 * * *"` — every 6 hours
+- `"0 6 * * 1"` — every Monday at 06:00 UTC
+- `"0 6,18 * * *"` — twice a day (06:00 and 18:00 UTC)
+
+You can also tune the `python run.py ...` line in the workflow to change
+`--max-pages`, `--delay`, or pass `--seed` URLs.
+
+### Caveats
+
+- For **public repos**, GitHub disables scheduled workflows after **60 days
+  of inactivity**. Any push or manual run re-enables them.
+- The crawler will keep accumulating results in `docs/results.jsonl` over
+  time. If you ever want to start fresh, just delete the file and push.
+- GitHub Actions has a free monthly minute quota (very generous for this
+  workload — a daily 50-page crawl uses a couple of minutes).

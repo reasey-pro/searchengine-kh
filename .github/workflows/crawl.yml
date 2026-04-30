@@ -1,0 +1,86 @@
+name: Crawl and publish
+
+# When this workflow runs:
+#   - On the schedule below (daily at 06:00 UTC by default).
+#   - Manually from the Actions tab via "Run workflow".
+#   - On any push to main that touches the crawler code (so a config change
+#     triggers a fresh crawl right away).
+#
+# NOTE: For public repos, GitHub disables scheduled workflows after 60 days
+# of repo inactivity. Any push (including a manual workflow run) re-enables them.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "config.py"
+      - "crawler.py"
+      - "utils.py"
+      - "storage.py"
+      - "run.py"
+      - "requirements.txt"
+      - ".github/workflows/crawl.yml"
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+
+    # Allow the workflow to push the updated results file back to the repo.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # The crawler is resume-aware: if data/results.jsonl already contains URLs,
+      # they won't be re-fetched. Seed from the previous published JSONL so each
+      # run picks up only NEW articles and accumulates over time.
+      - name: Restore previous results
+        run: |
+          mkdir -p data
+          if [ -f docs/results.jsonl ]; then
+            cp docs/results.jsonl data/results.jsonl
+            echo "Restored $(wc -l < data/results.jsonl) previous records."
+          else
+            echo "No previous results — fresh crawl."
+          fi
+
+      - name: Run crawler
+        run: |
+          python run.py \
+            --max-depth 2 \
+            --max-pages 50 \
+            --delay 2 \
+            --output data/results.jsonl
+
+      - name: Publish to docs/
+        run: |
+          mkdir -p docs
+          cp data/results.jsonl docs/results.jsonl
+          echo "Published $(wc -l < docs/results.jsonl) total records."
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/results.jsonl
+          if git diff --staged --quiet; then
+            echo "No new results — nothing to commit."
+          else
+            git commit -m "chore: update crawl results [skip ci]"
+            git push
+          fi
